@@ -3,7 +3,7 @@ package searchengine.dto.indexing;
 import lombok.*;
 
 @Data
-public class IndexingResponse{
+public class StartIndexingResponse {
     private boolean result;
 
     private String error;

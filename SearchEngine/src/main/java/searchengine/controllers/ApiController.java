@@ -4,9 +4,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import searchengine.dto.indexing.IndexingResponse;
+import searchengine.dto.indexing.StartIndexingResponse;
+import searchengine.dto.indexing.StopIndexingResponse;
 import searchengine.dto.statistics.StatisticsResponse;
-import searchengine.services.StartIndexingService;
+import searchengine.services.SiteIndexingService;
 import searchengine.services.StatisticsService;
 
 @RestController
@@ -14,12 +15,12 @@ import searchengine.services.StatisticsService;
 public class ApiController {
 
     private final StatisticsService statisticsService;
-    private final StartIndexingService startIndexingService;
+    private final SiteIndexingService siteIndexingService;
 
 
-    public ApiController(StatisticsService statisticsService, StartIndexingService startIndexingService) {
+    public ApiController(StatisticsService statisticsService, SiteIndexingService siteIndexingService) {
         this.statisticsService = statisticsService;
-        this.startIndexingService = startIndexingService;
+        this.siteIndexingService = siteIndexingService;
     }
 
     @GetMapping("/statistics")
@@ -28,7 +29,12 @@ public class ApiController {
     }
 
     @GetMapping("/startIndexing")
-    public ResponseEntity<IndexingResponse> startIndexing() throws InterruptedException {
-        return ResponseEntity.ok(startIndexingService.startIndexing());
+    public ResponseEntity<StartIndexingResponse> startIndexing() throws InterruptedException {
+        return ResponseEntity.ok(siteIndexingService.startIndexing());
+    }
+
+    @GetMapping("/stopIndexing")
+    public ResponseEntity<StopIndexingResponse> stopIndexing() {
+        return ResponseEntity.ok(siteIndexingService.stopIndexing());
     }
 }
