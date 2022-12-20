@@ -20,3 +20,5 @@ indexing-settings:
   sites:
     - url: http://radiomv.ru/
       name: Радио
+    - url: https://dombulgakova.ru/
+      name: Дом Булгакова

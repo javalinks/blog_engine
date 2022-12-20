@@ -16,6 +16,7 @@ import searchengine.repositories.SiteRepository;
 
 import java.util.*;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -23,7 +24,9 @@ public class SiteIndexingServiceImpl implements SiteIndexingService {
 
     private final SitesList sites;
 
-    private final List<Thread> threads;
+    private final List<ForkJoinPool> forkJoinPoolList;
+
+    private final AtomicBoolean interruptionCheck = new AtomicBoolean(false);
 
     @Autowired
     private PageRepository pageRepository;
@@ -41,8 +44,9 @@ public class SiteIndexingServiceImpl implements SiteIndexingService {
 
     private List<Page> dataForPageTable(String url) {
         List<Page> pageList = new ArrayList<>();
-        Map<String, Map<String, Integer>> siteMapWithContent = new ForkJoinPool().
-                invoke(new SiteMap(url));
+        ForkJoinPool forkJoinPool = new ForkJoinPool();
+        forkJoinPoolList.add(forkJoinPool);
+        Map<String, Map<String, Integer>> siteMapWithContent = forkJoinPool.invoke(new SiteMap(url));
         Map<String, Integer> contentAndStatusCode;
         for (Map.Entry<String, Map<String, Integer>> item : siteMapWithContent.entrySet()) {
             String link = urlTrim(item.getKey());
@@ -64,7 +68,7 @@ public class SiteIndexingServiceImpl implements SiteIndexingService {
         return pageList;
     }
 
-    private boolean siteListIndexing() {
+    private boolean indexingStart() {
         siteRepository.deleteAll();
         pageRepository.deleteAll();
         for (Site site : sites.getSites()) {
@@ -74,43 +78,56 @@ public class SiteIndexingServiceImpl implements SiteIndexingService {
             dbSite.setUrl(site.getUrl());
             dbSite.setName(site.getName());
             siteRepository.save(dbSite);
+        }
+        return true;
+    }
+
+    private void siteListIndexing() {
+        for (Site site : sites.getSites()) {
+            DbSite dbSite = siteRepository.getDbSiteByUrl(site.getUrl());
             new Thread(() -> {
-                threads.add(Thread.currentThread());
-                while (!Thread.currentThread().isInterrupted()) {
-                    try {
-                        List<Page> pageList = new ArrayList<>(dataForPageTable(dbSite.getUrl()));
+                List<Page> pageList = new ArrayList<>();
+                try {
+                    pageList = (dataForPageTable(site.getUrl()));
+                    throw new InterruptedException();
+                }
+                catch (RuntimeException ex) {
+                    dbSite.setStatus(Status.FAILED);
+                    dbSite.setStatusTime(new Date());
+                    dbSite.setLastError("Индексация остановлена пользователем");
+                    siteRepository.save(dbSite);
+                }
+                catch (Exception ex) {
+                    dbSite.setLastError(String.valueOf(ex.getMessage()));
+                    dbSite.setStatus(Status.FAILED);
+                    dbSite.setStatusTime(new Date());
+                    siteRepository.save(dbSite);
+                }
+                finally {
+                    if (!interruptionCheck.get()) {
                         pageRepository.saveAll(pageList);
                         dbSite.setStatusTime(new Date());
                         dbSite.setStatus(Status.INDEXED);
-                        siteRepository.save(dbSite);
-                        throw new InterruptedException();
-                    }
-                    catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                    catch (Exception ex) {
-                        dbSite.setLastError(String.valueOf(ex.getMessage()));
-                        dbSite.setStatus(Status.FAILED);
-                        dbSite.setStatusTime(new Date());
+                        dbSite.setLastError("NULL");
                         siteRepository.save(dbSite);
                     }
                 }
             }).start();
         }
-        return true;
     }
 
     @Override
     public StartIndexingResponse startIndexing() {
         StartIndexingResponse startIndexingResponse = new StartIndexingResponse();
-        if (siteRepository.indexingStatus().contains("INDEXING")) {
-            startIndexingResponse.setResult(false);
-            startIndexingResponse.setError("Индексация уже запущена");
-            return startIndexingResponse;
-        }
-        else if (siteListIndexing()) {
+        if (indexingStart()) {
             startIndexingResponse.setResult(true);
             startIndexingResponse.setError("");
+            siteListIndexing();
+            return startIndexingResponse;
+        }
+        else if (siteRepository.indexingStatus().contains("INDEXING")) {
+            startIndexingResponse.setResult(false);
+            startIndexingResponse.setError("Индексация уже запущена");
             return startIndexingResponse;
         }
         return startIndexingResponse;
@@ -119,23 +136,17 @@ public class SiteIndexingServiceImpl implements SiteIndexingService {
     @Override
     public StopIndexingResponse stopIndexing() {
         StopIndexingResponse stopIndexingResponse = new StopIndexingResponse();
-        for (Thread thread : threads) {
-            try {
-                thread.interrupt();
-                throw new InterruptedException();
-            } catch (InterruptedException e) {
-                stopIndexingResponse.setResult(true);
-                stopIndexingResponse.setError("");
-            }
-        }
         if (siteRepository.indexingStatus().contains("INDEXING")) {
-            List<DbSite> dbSites = siteRepository.indexingSite("INDEXING");
-            for (DbSite dbSite : dbSites) {
-                dbSite.setStatus(Status.FAILED);
-                dbSite.setStatusTime(new Date());
-                dbSite.setLastError("Индексация остановлена пользователем");
-                siteRepository.save(dbSite);
-            }
+            forkJoinPoolList.forEach(pool -> {
+                if (!pool.isTerminated()) {
+                    pool.shutdownNow();
+                    interruptionCheck.set(true);
+                } else {
+                    interruptionCheck.set(false);
+                }
+            });
+            stopIndexingResponse.setResult(true);
+            stopIndexingResponse.setError("");
             return stopIndexingResponse;
         }
         else if (!siteRepository.indexingStatus().contains("INDEXING")) {

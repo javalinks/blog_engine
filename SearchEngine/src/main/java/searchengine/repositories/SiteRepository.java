@@ -15,7 +15,4 @@ public interface SiteRepository extends JpaRepository<DbSite, Integer> {
 
     @Query(value = "SELECT status FROM site", nativeQuery = true)
     List<String> indexingStatus();
-
-    @Query(value = "SELECT * FROM site WHERE status LIKE :status", nativeQuery = true)
-    List<DbSite> indexingSite(String status);
 }
